@@ -18,7 +18,7 @@
 
 // Adafruit IO Account Configuration
 #define AIO_USERNAME "morenzoe"
-#define AIO_KEY      "aio_yocw169qjxDJfZGZK28k9SPWHPmG"
+#define AIO_KEY      "aio_ctxH90ZUchd17uYoN1tNRib4TbE6"
 
 /************ Global State (you don't need to change this!) ******************/
 
@@ -91,18 +91,6 @@ int ledh = 12;
 #define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
 #define TIME_TO_SLEEP  60        /* Time ESP32 will go to sleep (in seconds) */
 
-// Define NTP Client to get time
-#include <NTPClient.h>
-#include <WiFiUdp.h>
-
-// Variables to save date and time
-String formattedDate;
-String dayStamp;
-String timeStamp;
-
-WiFiUDP ntpUDP;
-NTPClient timeClient(ntpUDP);
-
 void setup() {
   Serial.begin(9600);
   delay(10);
@@ -117,8 +105,6 @@ void setup() {
   esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
   Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
   " Seconds");
-
-  Serial.println(F("Adafruit IO MQTTS (SSL/TLS) Example"));
 
   // Connect to WiFi access point.
   Serial.println(); Serial.println();
@@ -146,107 +132,89 @@ void setup() {
   pinMode (led, OUTPUT);
   pinMode (ledh, OUTPUT);
 
-  
-  //while(!Serial);    // time to get serial running
-  Serial.println(F("BME280 test"));
-
   unsigned status;
   
   // default settings
   status = bme.begin(0x76);  
-  /*
-  // You can also pass in a Wire library object like &Wire2
-  // status = bme.begin(0x76, &Wire2)
-  if (!status) {
-      Serial.println("Could not find a valid BME280 sensor, check wiring, address, sensor ID!");
-      Serial.print("SensorID was: 0x"); Serial.println(bme.sensorID(),16);
-      Serial.print("        ID of 0xFF probably means a bad address, a BMP 180 or BMP 085\n");
-      Serial.print("   ID of 0x56-0x58 represents a BMP 280,\n");
-      Serial.print("        ID of 0x60 represents a BME 280.\n");
-      Serial.print("        ID of 0x61 represents a BME 680.\n");
-      while (1) delay(10);
-    }
-    */
-    Serial.println("-- Default Test --");
-
-    Serial.println();
 
     MQTT_connect();
-
-    // Initialize a NTPClient to get time
-    timeClient.begin();
-      // Set offset time in seconds to adjust for your timezone, for example:
-    // GMT +1 = 3600
-    // GMT +8 = 28800
-    // GMT -1 = -3600
-    // GMT 0 = 0
-    timeClient.setTimeOffset(25200);
-
-    // getTimeStamp();
 
     // Now we can publish stuff!
 
     // Power (On)
+    Serial.print(("\nTurning on..."));
     if (! Power.publish(1)) {
       Serial.print(F("Failed"));
     } else {
-      Serial.print(F("OK!"));
+      Serial.print(F("Power On!"));
     }
+
+    delay(2000);
 
     // Temperature (C)
     Serial.print(F("\nSending val "));
     float tempC = bme.readTemperature();
     Serial.print(tempC);
-    Serial.print(F(" to test feed..."));
+    Serial.print(F(" to TemperatureC feed..."));
     if (! TemperatureC.publish(tempC)) {
       Serial.print(F("Failed"));
     } else {
       Serial.print(F("OK!"));
     }
 
+    delay(2000);
+
     // Temperature (F)
     Serial.print(F("\nSending val "));
     float tempF = tempC*9/5+32;
     Serial.print(tempF);
-    Serial.print(F(" to test feed..."));
+    Serial.print(F(" to TemperatureF feed..."));
     if (! TemperatureF.publish(tempF)) {
       Serial.print(F("Failed"));
     } else {
       Serial.print(F("OK!"));
     }
 
+    delay(2000);
+
     // Pressure (mbar)
     Serial.print(F("\nSending val "));
     float pressure = bme.readPressure() / 100.0F;
     Serial.print(pressure);
-    Serial.print(F(" to fal feed..."));
+    Serial.print(F(" to Pressure feed..."));
     if (! Pressure.publish(pressure)) {
       Serial.print(F("Failed"));
     } else {
       Serial.print(F("OK!"));    
     }
 
+    delay(2000);
+
     // Humidity (% RH)
     Serial.print(F("\nSending val "));
     float humid = bme.readHumidity();
     Serial.print(humid);
-    Serial.print(F(" to lembap feed..."));
+    Serial.print(F(" to Humidity feed..."));
     if (! Humidity.publish(humid)) {
       Serial.print(F("Failed"));
     } else {
       Serial.print(F("OK!"));    
     }
 
+    delay(2000);
+
     // Heat Index
     Serial.print(F("\nSending val "));
     float heatIdx = HeatIndex(tempF, humid);
     Serial.print(heatIdx);
-    Serial.print(F(" to lembap feed..."));
+    Serial.print(F(" to HeatIdx feed..."));
     if (! HeatIdx.publish(heatIdx)) {
       Serial.print(F("Failed"));
     } else {
       Serial.print(F("OK!"));    
     }
+
+    delay(2000);
   
     readSensor();
     if (heatIdx >= 103.00){
@@ -258,10 +226,11 @@ void setup() {
       }
 
     // Power (Off)
+    Serial.print(("\nTurning off..."));
     if (! Power.publish(0)) {
       Serial.print(F("Failed"));
     } else {
-      Serial.print(F("OK!"));
+      Serial.print(F("Power Off!"));
     }
 
     Serial.println("\nGoing to sleep now");
@@ -286,28 +255,8 @@ void print_wakeup_reason(){
   }
 }
 
-// Function to get date and time from NTPClient
-void getTimeStamp() {
-  while(!timeClient.update()) {
-    timeClient.forceUpdate();
-  }
-  // The formattedDate comes with the following format:
-  // 2018-05-28T16:00:13Z
-  // We need to extract date and time
-  formattedDate = timeClient.getFormattedDate();
-  Serial.println(formattedDate);
-
-  // Extract date
-  int splitT = formattedDate.indexOf("T");
-  dayStamp = formattedDate.substring(0, splitT);
-  Serial.println(dayStamp);
-  // Extract time
-  timeStamp = formattedDate.substring(splitT+1, formattedDate.length()-1);
-  Serial.println(timeStamp);
-}
-
 void danger(){
-for (int count = 0;count < 50; count++) {
+for (int count = 0;count < 10; count++) {
     digitalWrite(led, HIGH);
     delay(100);
     digitalWrite(led, LOW);
@@ -317,7 +266,7 @@ for (int count = 0;count < 50; count++) {
 
 void safe(){
   digitalWrite(buzz, LOW);
-for (int n = 0;n < 50; n++) {
+for (int n = 0;n < 10; n++) {
     digitalWrite(ledh, HIGH);
     delay(100);
     digitalWrite(ledh, LOW);
