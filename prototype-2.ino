@@ -18,7 +18,7 @@
 
 // Adafruit IO Account Configuration
 #define AIO_USERNAME "morenzoe"
-#define AIO_KEY      "aio_UNYx88SUKE81kr3cXy50xt37rjtd"
+#define AIO_KEY      "aio_yocw169qjxDJfZGZK28k9SPWHPmG"
 
 /************ Global State (you don't need to change this!) ******************/
 
@@ -55,29 +55,68 @@ const char* adafruitio_root_ca = \
 
 /****************************** Feeds ***************************************/
 // Notice MQTT paths for AIO follow the form: <username>/feeds/<feedname>
-Adafruit_MQTT_Publish Temperature = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Temperature");
+Adafruit_MQTT_Publish TemperatureC = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/TemperatureC");
+Adafruit_MQTT_Publish TemperatureF = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/TemperatureF");
 Adafruit_MQTT_Publish Pressure = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Pressure");
 Adafruit_MQTT_Publish Humidity = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Humidity");
-Adafruit_MQTT_Publish heatc = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/heatc");
+Adafruit_MQTT_Publish HeatIdx = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/HeatIdx");
+Adafruit_MQTT_Publish Power = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/Power");
+Adafruit_MQTT_Publish DateTime = Adafruit_MQTT_Publish(&mqtt, AIO_USERNAME "/feeds/DateTime");
 /*************************** Sketch Code ************************************/
 
+// BME280 sensor
 #include <Wire.h>
 #include <Adafruit_Sensor.h>
 #include <Adafruit_BME280.h>
 
-#define SEALEVELPRESSURE_HPA (1013.25)
-
 Adafruit_BME280 bme; // I2C
 
+// Heat Index
+#define hi_coeff1 -42.379
+#define hi_coeff2   2.04901523
+#define hi_coeff3  10.14333127
+#define hi_coeff4  -0.22475541
+#define hi_coeff5  -0.00683783
+#define hi_coeff6  -0.05481717
+#define hi_coeff7   0.00122874
+#define hi_coeff8   0.00085282
+#define hi_coeff9  -0.00000199
+
+// Actuator
 int led = 2;
 int buzz = 4;
 int ledh = 12;
 
-unsigned long delayTime;
+// Deep Sleep
+#define uS_TO_S_FACTOR 1000000ULL  /* Conversion factor for micro seconds to seconds */
+#define TIME_TO_SLEEP  60        /* Time ESP32 will go to sleep (in seconds) */
+
+// Define NTP Client to get time
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+// Variables to save date and time
+String formattedDate;
+String dayStamp;
+String timeStamp;
+
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP);
 
 void setup() {
   Serial.begin(9600);
   delay(10);
+
+  //Print the wakeup reason for ESP32
+  print_wakeup_reason();
+
+  /*
+  First we configure the wake up source
+  We set our ESP32 to wake up every 5 seconds
+  */
+  esp_sleep_enable_timer_wakeup(TIME_TO_SLEEP * uS_TO_S_FACTOR);
+  Serial.println("Setup ESP32 to sleep for every " + String(TIME_TO_SLEEP) +
+  " Seconds");
 
   Serial.println(F("Adafruit IO MQTTS (SSL/TLS) Example"));
 
@@ -129,14 +168,146 @@ void setup() {
     }
     */
     Serial.println("-- Default Test --");
-    delayTime = 1000;
 
     Serial.println();
-    
+
+    MQTT_connect();
+
+    // Initialize a NTPClient to get time
+    timeClient.begin();
+      // Set offset time in seconds to adjust for your timezone, for example:
+    // GMT +1 = 3600
+    // GMT +8 = 28800
+    // GMT -1 = -3600
+    // GMT 0 = 0
+    timeClient.setTimeOffset(25200);
+
+    // getTimeStamp();
+
+    // Now we can publish stuff!
+
+    // Power (On)
+    if (! Power.publish(1)) {
+      Serial.print(F("Failed"));
+    } else {
+      Serial.print(F("OK!"));
+    }
+
+    // Temperature (C)
+    Serial.print(F("\nSending val "));
+    float tempC = bme.readTemperature();
+    Serial.print(tempC);
+    Serial.print(F(" to test feed..."));
+    if (! TemperatureC.publish(tempC)) {
+      Serial.print(F("Failed"));
+    } else {
+      Serial.print(F("OK!"));
+    }
+
+    // Temperature (F)
+    Serial.print(F("\nSending val "));
+    float tempF = tempC*9/5+32;
+    Serial.print(tempF);
+    Serial.print(F(" to test feed..."));
+    if (! TemperatureF.publish(tempF)) {
+      Serial.print(F("Failed"));
+    } else {
+      Serial.print(F("OK!"));
+    }
+
+    // Pressure (mbar)
+    Serial.print(F("\nSending val "));
+    float pressure = bme.readPressure() / 100.0F;
+    Serial.print(pressure);
+    Serial.print(F(" to fal feed..."));
+    if (! Pressure.publish(pressure)) {
+      Serial.print(F("Failed"));
+    } else {
+      Serial.print(F("OK!"));    
+    }
+
+    // Humidity (% RH)
+    Serial.print(F("\nSending val "));
+    float humid = bme.readHumidity();
+    Serial.print(humid);
+    Serial.print(F(" to lembap feed..."));
+    if (! Humidity.publish(humid)) {
+      Serial.print(F("Failed"));
+    } else {
+      Serial.print(F("OK!"));    
+    }
+
+    // Heat Index
+    Serial.print(F("\nSending val "));
+    float heatIdx = HeatIndex(tempF, humid);
+    Serial.print(heatIdx);
+    Serial.print(F(" to lembap feed..."));
+    if (! HeatIdx.publish(heatIdx)) {
+      Serial.print(F("Failed"));
+    } else {
+      Serial.print(F("OK!"));    
+    }
+  
+    readSensor();
+    if (heatIdx >= 103.00){
+      digitalWrite(buzz, HIGH);
+      danger();
+      }
+    else {
+      safe();
+      }
+
+    // Power (Off)
+    if (! Power.publish(0)) {
+      Serial.print(F("Failed"));
+    } else {
+      Serial.print(F("OK!"));
+    }
+
+    Serial.println("\nGoing to sleep now");
+    Serial.flush(); 
+    esp_deep_sleep_start();
+    Serial.println("This will never be printed");
+}
+
+void print_wakeup_reason(){
+  esp_sleep_wakeup_cause_t wakeup_reason;
+
+  wakeup_reason = esp_sleep_get_wakeup_cause();
+
+  switch(wakeup_reason)
+  {
+    case ESP_SLEEP_WAKEUP_EXT0 : Serial.println("Wakeup caused by external signal using RTC_IO"); break;
+    case ESP_SLEEP_WAKEUP_EXT1 : Serial.println("Wakeup caused by external signal using RTC_CNTL"); break;
+    case ESP_SLEEP_WAKEUP_TIMER : Serial.println("Wakeup caused by timer"); break;
+    case ESP_SLEEP_WAKEUP_TOUCHPAD : Serial.println("Wakeup caused by touchpad"); break;
+    case ESP_SLEEP_WAKEUP_ULP : Serial.println("Wakeup caused by ULP program"); break;
+    default : Serial.printf("Wakeup was not caused by deep sleep: %d\n",wakeup_reason); break;
+  }
+}
+
+// Function to get date and time from NTPClient
+void getTimeStamp() {
+  while(!timeClient.update()) {
+    timeClient.forceUpdate();
+  }
+  // The formattedDate comes with the following format:
+  // 2018-05-28T16:00:13Z
+  // We need to extract date and time
+  formattedDate = timeClient.getFormattedDate();
+  Serial.println(formattedDate);
+
+  // Extract date
+  int splitT = formattedDate.indexOf("T");
+  dayStamp = formattedDate.substring(0, splitT);
+  Serial.println(dayStamp);
+  // Extract time
+  timeStamp = formattedDate.substring(splitT+1, formattedDate.length()-1);
+  Serial.println(timeStamp);
 }
 
 void danger(){
-for (int count = 0;count < 40; count++) {
+for (int count = 0;count < 50; count++) {
     digitalWrite(led, HIGH);
     delay(100);
     digitalWrite(led, LOW);
@@ -144,9 +315,9 @@ for (int count = 0;count < 40; count++) {
 }
 }
 
-void aman(){
+void safe(){
   digitalWrite(buzz, LOW);
-for (int n = 0;n < 40; n++) {
+for (int n = 0;n < 50; n++) {
     digitalWrite(ledh, HIGH);
     delay(100);
     digitalWrite(ledh, LOW);
@@ -154,14 +325,65 @@ for (int n = 0;n < 40; n++) {
 }
 }
 
-void ukur(){
+void readSensor(){
   float h = bme.readHumidity();
-  float t = bme.readTemperature();
-  float p = bme.readPressure();
-  if (isnan(h) || isnan(t) || isnan(p)) {
-    Serial.println(F("Failed to read from DHT sensor!"));
+  float c = bme.readTemperature();
+  float f = bme.readTemperature();
+  float p = bme.readPressure() / 100.0F;
+  if (isnan(h) || isnan(c) || isnan(p) || isnan(f)) {
+    Serial.println(F("Failed to read from BME280 sensor!"));
     return;
   }
+}
+
+float HeatIndex
+(
+  float temperature,
+  float humidity
+)
+{
+  float heatIndex(NAN);
+
+  if ( isnan(temperature) || isnan(humidity) ) 
+  {
+    return heatIndex;
+  }
+
+  // Using both Rothfusz and Steadman's equations
+  // http://www.wpc.ncep.noaa.gov/html/heatindex_equation.shtml
+  if (temperature <= 40) 
+  {
+    heatIndex = temperature;  //first red block
+  }
+  else
+  {
+    heatIndex = 0.5 * (temperature + 61.0 + ((temperature - 68.0) * 1.2) + (humidity * 0.094)); //calculate A -- from the official site, not the flow graph
+
+    if (heatIndex >= 79) 
+    {
+      /*
+      * calculate B  
+      * the following calculation is optimized. Simply spoken, reduzed cpu-operations to minimize used ram and runtime. 
+      * Check the correctness with the following link:
+      * http://www.wolframalpha.com/input/?source=nav&i=b%3D+x1+%2B+x2*T+%2B+x3*H+%2B+x4*T*H+%2B+x5*T*T+%2B+x6*H*H+%2B+x7*T*T*H+%2B+x8*T*H*H+%2B+x9*T*T*H*H
+      */
+      heatIndex = hi_coeff1
+      + (hi_coeff2 + hi_coeff4 * humidity + temperature * (hi_coeff5 + hi_coeff7 * humidity)) * temperature
+      + (hi_coeff3 + humidity * (hi_coeff6 + temperature * (hi_coeff8 + hi_coeff9 * temperature))) * humidity;
+      //third red block
+      if ((humidity < 13) && (temperature >= 80.0) && (temperature <= 112.0))
+      {
+        heatIndex -= ((13.0 - humidity) * 0.25) * sqrt((17.0 - abs(temperature - 95.0)) * 0.05882);
+      } //fourth red block
+      else if ((humidity > 85.0) && (temperature >= 80.0) && (temperature <= 87.0))
+      {
+        heatIndex += (0.02 * (humidity - 85.0) * (87.0 - temperature));
+      }
+    }
+  }
+  
+  return heatIndex; //fifth red block
+  
 }
 
 uint32_t x=0;
@@ -170,55 +392,7 @@ void loop() {
   // Ensure the connection to the MQTT server is alive (this will make the first
   // connection and automatically reconnect when disconnected).  See the MQTT_connect
   // function definition further below.
-  MQTT_connect();
-
-  // Now we can publish stuff!
-  Serial.print(F("\nSending val "));
-  Serial.print(bme.readTemperature());
-  Serial.print(F(" to test feed..."));
-  if (! Temperature.publish(bme.readTemperature())) {
-    Serial.print(F("Failed"));
-  } else {
-    Serial.print(F("OK!"));
-  }
-    
-  Serial.print(F("\nSending val "));
-  Serial.print(bme.readPressure());
-  Serial.print(F(" to fal feed..."));
-  if (! Pressure.publish(bme.readPressure())) {
-    Serial.print(F("Failed"));
-  } else {
-    Serial.print(F("OK!"));    
-  }
-      
-  Serial.print(F("\nSending val "));
-  Serial.print(bme.readHumidity());
-  Serial.print(F(" to lembap feed..."));
-  if (! Humidity.publish(bme.readHumidity())) {
-    Serial.print(F("Failed"));
-  } else {
-    Serial.print(F("OK!"));    
-  }
-  /*
-
-  Serial.print(F("\nSending val "));
-  Serial.print(dht.computeHeatIndex(dht.readTemperature(), dht.readHumidity(), false));
-  Serial.print(F(" to heatc feed..."));
-  if (! heatc.publish(dht.computeHeatIndex(dht.readTemperature(), dht.readHumidity(), false))) {
-    Serial.print(F("Failed"));
-  } else {
-    Serial.print(F("OK!"));    
-  }
-  */
   
-  ukur();
-  if ((bme.readTemperature()) >= 34.00){
-    digitalWrite(buzz, HIGH);
-    danger();
-    }
-  else {
-    aman();
-    }
 }
 
 // Function to connect and reconnect as necessary to the MQTT server.
